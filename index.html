@@ -12,6 +12,8 @@
         <button id="loadButton" class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">Load JSON</button>
         <button id="exportCsvButton" class="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600">Export CSV</button>
         <button id="importCsvButton" class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600">Import CSV</button>
+        <button id="undoButton" class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">Undo</button>
+        <button id="redoButton" class="px-4 py-2 bg-teal-500 text-white rounded hover:bg-teal-600">Redo</button>
         <input type="file" id="fileInput" class="hidden" accept=".json,.csv">
         <div class="flex items-center">
             <input type="number" id="addRowInput" class="w-16 p-2 border border-gray-300 rounded" value="1" min="1">
@@ -33,6 +35,8 @@
         let activeCell = null;
         let columns = ['A', 'B', 'C', 'D', 'E'];
         let rows = [1, 2, 3, 4, 5];
+        let history = [];
+        let redoStack = [];
 
         function initializeSpreadsheet() {
             const spreadsheet = document.getElementById('spreadsheet');
@@ -81,6 +85,8 @@
         }
 
         function setCellValue(id, value, formula = null) {
+            saveHistory(); // Save the current state before making changes
+            redoStack = []; // Clear the redo stack whenever a new change is made
             const numericValue = parseFloat(value);
             const finalValue = !isNaN(numericValue) ? numericValue : value;
             cells[id] = { value: finalValue, formula: formula || value.toString() };
@@ -90,6 +96,26 @@
                 cellElement.style.backgroundColor = formula?.startsWith('=') ? 'yellow' : '';
             }
             updateDependentCells();
+        }
+
+        function saveHistory() {
+            history.push(JSON.stringify(cells));
+        }
+
+        function undo() {
+            if (history.length > 0) {
+                redoStack.push(JSON.stringify(cells));
+                cells = JSON.parse(history.pop());
+                updateCellValues();
+            }
+        }
+
+        function redo() {
+            if (redoStack.length > 0) {
+                history.push(JSON.stringify(cells));
+                cells = JSON.parse(redoStack.pop());
+                updateCellValues();
+            }
         }
 
         function activateCell(id) {
@@ -149,11 +175,12 @@
 
         function saveSpreadsheet() {
             const data = JSON.stringify({ cells, columns, rows });
+            const unixTimestamp = Math.floor(Date.now() / 1000);
             const blob = new Blob([data], {type: 'application/json'});
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'spreadsheet.json';
+            a.download = `spreadsheet_${unixTimestamp}.json`;
             a.click();
             URL.revokeObjectURL(url);
         }
@@ -161,14 +188,16 @@
         function loadSpreadsheet(event) {
             const file = event.target.files[0];
             if (file) {
+                if (Object.keys(cells).length > 0 && !confirm("You have unsaved changes. Do you want to continue without saving?")) {
+                    return;
+                }
+
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     const content = e.target.result;
                     if (file.name.endsWith('.json')) {
-                        console.log('Loaded JSON:', content);  // Para depurar
                         loadJSON(content);
                     } else if (file.name.endsWith('.csv')) {
-                        console.log('Loaded CSV:', content);  // Para depurar
                         loadCSV(content);
                     }
                 };
@@ -211,17 +240,19 @@
                 });
                 csvContent += rowData.join(',') + '\n';
             });
-            
+
+            const unixTimestamp = Math.floor(Date.now() / 1000);
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'spreadsheet.csv';
+            a.download = `spreadsheet_${unixTimestamp}.csv`;
             a.click();
             URL.revokeObjectURL(url);
         }
 
         function addRows() {
+            saveHistory(); // Save the current state before making changes
             const numRows = parseInt(document.getElementById('addRowInput').value);
             const lastRow = rows[rows.length - 1];
             for (let i = 1; i <= numRows; i++) {
@@ -231,6 +262,7 @@
         }
 
         function addColumns() {
+            saveHistory(); // Save the current state before making changes
             const numCols = parseInt(document.getElementById('addColInput').value);
             const lastCol = columns[columns.length - 1];
             for (let i = 1; i <= numCols; i++) {
@@ -249,6 +281,16 @@
             }
         });
 
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'z') {
+                e.preventDefault();
+                undo();
+            } else if (e.ctrlKey && e.key === 'y') {
+                e.preventDefault();
+                redo();
+            }
+        });
+
         document.getElementById('saveButton').addEventListener('click', saveSpreadsheet);
         document.getElementById('loadButton').addEventListener('click', () => {
             document.getElementById('fileInput').accept = '.json';
@@ -262,6 +304,8 @@
         document.getElementById('fileInput').addEventListener('change', loadSpreadsheet);
         document.getElementById('addRowButton').addEventListener('click', addRows);
         document.getElementById('addColButton').addEventListener('click', addColumns);
+        document.getElementById('undoButton').addEventListener('click', undo);
+        document.getElementById('redoButton').addEventListener('click', redo);
 
         initializeSpreadsheet();
     </script>
