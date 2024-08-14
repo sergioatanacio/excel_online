@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Spreadsheet</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-4">
+    <div class="mb-4 flex space-x-2 flex-wrap">
+        <button id="saveButton" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Save JSON</button>
+        <button id="loadButton" class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">Load JSON</button>
+        <button id="exportCsvButton" class="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600">Export CSV</button>
+        <button id="importCsvButton" class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600">Import CSV</button>
+        <input type="file" id="fileInput" class="hidden" accept=".json,.csv">
+        <div class="flex items-center">
+            <input type="number" id="addRowInput" class="w-16 p-2 border border-gray-300 rounded" value="1" min="1">
+            <button id="addRowButton" class="ml-2 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">Add Rows</button>
+        </div>
+        <div class="flex items-center">
+            <input type="number" id="addColInput" class="w-16 p-2 border border-gray-300 rounded" value="1" min="1">
+            <button id="addColButton" class="ml-2 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">Add Columns</button>
+        </div>
+    </div>
+    <div class="mb-4">
+        <textarea id="formulaInput" class="w-full p-2 border border-gray-300 rounded" placeholder="Enter formula or value"></textarea>
+    </div>
+    <div id="cellReference" class="mb-2">No cell selected</div>
+    <div id="spreadsheet" class="border border-gray-300 overflow-auto max-h-[70vh]"></div>
+
+    <script>
+        let cells = {};
+        let activeCell = null;
+        let columns = ['A', 'B', 'C', 'D', 'E'];
+        let rows = [1, 2, 3, 4, 5];
+
+        function initializeSpreadsheet() {
+            const spreadsheet = document.getElementById('spreadsheet');
+            spreadsheet.innerHTML = ''; // Clear existing content
+            const table = document.createElement('table');
+            table.className = 'w-full border-collapse';
+
+            // Create header row
+            const headerRow = document.createElement('tr');
+            headerRow.innerHTML = '<th class="border border-gray-300"></th>' + 
+                columns.map(col => `<th class="border border-gray-300 p-2">${col}</th>`).join('');
+            table.appendChild(headerRow);
+
+            // Create data rows
+            rows.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<th class="border border-gray-300 p-2">${row}</th>` +
+                    columns.map(col => {
+                        const cellId = `${col}${row}`;
+                        return `<td class="border border-gray-300 p-0">
+                            <input type="text" id="${cellId}" readonly
+                                class="w-full h-full p-2 focus:outline-none"
+                                onclick="activateCell('${cellId}')"
+                            />
+                        </td>`;
+                    }).join('');
+                table.appendChild(tr);
+            });
+
+            spreadsheet.appendChild(table);
+            updateCellValues();
+        }
+
+        function updateCellValues() {
+            Object.entries(cells).forEach(([cellId, cellData]) => {
+                const cellElement = document.getElementById(cellId);
+                if (cellElement) {
+                    cellElement.value = cellData.value;
+                    cellElement.style.backgroundColor = cellData.formula?.startsWith('=') ? 'yellow' : '';
+                }
+            });
+        }
+
+        function getCellValue(id) {
+            return cells[id]?.value ?? '';
+        }
+
+        function setCellValue(id, value, formula = null) {
+            const numericValue = parseFloat(value);
+            const finalValue = !isNaN(numericValue) ? numericValue : value;
+            cells[id] = { value: finalValue, formula: formula || value.toString() };
+            const cellElement = document.getElementById(id);
+            if (cellElement) {
+                cellElement.value = finalValue;
+                cellElement.style.backgroundColor = formula?.startsWith('=') ? 'yellow' : '';
+            }
+            updateDependentCells();
+        }
+
+        function activateCell(id) {
+            if (activeCell) {
+                updateCell();
+                document.getElementById(activeCell)?.classList.remove('bg-blue-100');
+            }
+            activeCell = id;
+            document.getElementById(id)?.classList.add('bg-blue-100');
+            document.getElementById('cellReference').textContent = id;
+            const formulaInput = document.getElementById('formulaInput');
+            formulaInput.value = cells[id]?.formula || '';
+            formulaInput.focus();
+            formulaInput.select();
+        }
+
+        function updateCell() {
+            if (!activeCell) return;
+
+            const formulaInput = document.getElementById('formulaInput').value;
+            setCellValue(activeCell, evaluateFormula(formulaInput), formulaInput);
+        }
+
+        function evaluateFormula(formula) {
+            if (formula.startsWith('=')) {
+                try {
+                    const code = formula.slice(1).replace(/([A-Z][0-9]+)/g, "getCellValue('$1')");
+                    
+                    const wrappedCode = `
+                        return (function() {
+                            const result = ${code};
+                            return typeof result === 'function' ? result() : result;
+                        })();
+                    `;
+                    
+                    return new Function('getCellValue', wrappedCode)(getCellValue);
+                } catch (error) {
+                    console.error('Error evaluating formula:', error);
+                    return '#ERROR';
+                }
+            }
+            return formula;
+        }
+
+        function updateDependentCells() {
+            Object.entries(cells).forEach(([cellId, cellData]) => {
+                if (cellData.formula.startsWith('=')) {
+                    const result = evaluateFormula(cellData.formula);
+                    cells[cellId].value = result;
+                    const cellElement = document.getElementById(cellId);
+                    if (cellElement) {
+                        cellElement.value = result;
+                    }
+                }
+            });
+        }
+
+        function saveSpreadsheet() {
+            const data = JSON.stringify({ cells, columns, rows });
+            const blob = new Blob([data], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'spreadsheet.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function loadSpreadsheet(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const content = e.target.result;
+                    if (file.name.endsWith('.json')) {
+                        console.log('Loaded JSON:', content);  // Para depurar
+                        loadJSON(content);
+                    } else if (file.name.endsWith('.csv')) {
+                        console.log('Loaded CSV:', content);  // Para depurar
+                        loadCSV(content);
+                    }
+                };
+                reader.readAsText(file);
+            }
+        }
+
+        function loadJSON(jsonString) {
+            const loadedData = JSON.parse(jsonString);
+            cells = loadedData.cells || {};
+            columns = loadedData.columns || ['A', 'B', 'C', 'D', 'E'];
+            rows = loadedData.rows || [1, 2, 3, 4, 5];
+            initializeSpreadsheet();
+        }
+
+        function loadCSV(csvString) {
+            cells = {};
+            const csvRows = csvString.split('\n').filter(row => row.trim() !== '');
+            const maxColumns = Math.max(...csvRows.map(row => row.split(',').length));
+            columns = Array.from({length: maxColumns}, (_, i) => String.fromCharCode(65 + i));
+            rows = Array.from({length: csvRows.length}, (_, i) => i + 1);
+
+            csvRows.forEach((row, rowIndex) => {
+                const values = row.split(',');
+                values.forEach((value, colIndex) => {
+                    const cellId = `${columns[colIndex]}${rowIndex + 1}`;
+                    setCellValue(cellId, value.trim());
+                });
+            });
+
+            initializeSpreadsheet();
+        }
+
+        function exportCSV() {
+            let csvContent = '';
+            rows.forEach(row => {
+                const rowData = columns.map(col => {
+                    const cellValue = getCellValue(`${col}${row}`);
+                    return typeof cellValue === 'string' && cellValue.includes(',') ? `"${cellValue}"` : cellValue;
+                });
+                csvContent += rowData.join(',') + '\n';
+            });
+            
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'spreadsheet.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function addRows() {
+            const numRows = parseInt(document.getElementById('addRowInput').value);
+            const lastRow = rows[rows.length - 1];
+            for (let i = 1; i <= numRows; i++) {
+                rows.push(lastRow + i);
+            }
+            initializeSpreadsheet();
+        }
+
+        function addColumns() {
+            const numCols = parseInt(document.getElementById('addColInput').value);
+            const lastCol = columns[columns.length - 1];
+            for (let i = 1; i <= numCols; i++) {
+                columns.push(String.fromCharCode(lastCol.charCodeAt(0) + i));
+            }
+            initializeSpreadsheet();
+        }
+
+        document.getElementById('formulaInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                updateCell();
+                if (activeCell) {
+                    document.getElementById(activeCell)?.focus();
+                }
+            }
+        });
+
+        document.getElementById('saveButton').addEventListener('click', saveSpreadsheet);
+        document.getElementById('loadButton').addEventListener('click', () => {
+            document.getElementById('fileInput').accept = '.json';
+            document.getElementById('fileInput').click();
+        });
+        document.getElementById('exportCsvButton').addEventListener('click', exportCSV);
+        document.getElementById('importCsvButton').addEventListener('click', () => {
+            document.getElementById('fileInput').accept = '.csv';
+            document.getElementById('fileInput').click();
+        });
+        document.getElementById('fileInput').addEventListener('change', loadSpreadsheet);
+        document.getElementById('addRowButton').addEventListener('click', addRows);
+        document.getElementById('addColButton').addEventListener('click', addColumns);
+
+        initializeSpreadsheet();
+    </script>
+</body>
+</html>
